@@ -13,6 +13,14 @@ st.set_page_config(
     layout="wide"
 )
 
+# ---------------- SESSION STATE INIT ----------------
+if "temp" not in st.session_state:
+    st.session_state.temp = 25
+if "rain" not in st.session_state:
+    st.session_state.rain = 1000
+if "nitro" not in st.session_state:
+    st.session_state.nitro = 70
+
 # ---------------- UTILS ----------------
 def translate_text(text, lang):
     return GoogleTranslator(source="auto", target=lang).translate(text)
@@ -20,17 +28,18 @@ def translate_text(text, lang):
 def speak_text(text, lang):
     filename = f"audio_{uuid.uuid4()}.mp3"
     gTTS(text=text, lang=lang).save(filename)
+
     with open(filename, "rb") as f:
-        audio_bytes = f.read()
-        b64 = base64.b64encode(audio_bytes).decode()
+        b64 = base64.b64encode(f.read()).decode()
+
     st.markdown(f"""
         <audio autoplay>
             <source src="data:audio/mp3;base64,{b64}">
         </audio>
     """, unsafe_allow_html=True)
+
     os.remove(filename)
 
-# -------- SPEECH DATA EXTRACTION --------
 def extract_value(text, keywords, default):
     for key in keywords:
         match = re.search(rf"{key}[^0-9]*([0-9]+)", text.lower())
@@ -38,7 +47,7 @@ def extract_value(text, keywords, default):
             return int(match.group(1))
     return default
 
-# ---------------- UI HEADER ----------------
+# ---------------- HEADER ----------------
 st.title("🌱 AgriVision (AV)")
 st.markdown("### *Breaking the Literacy Barrier in Agriculture*")
 
@@ -56,7 +65,7 @@ languages = {
 lang_name = st.sidebar.selectbox("Language", list(languages.keys()))
 lang_code = languages[lang_name]
 
-# ---------------- SPEECH INPUT ----------------
+# ---------------- SPEECH INPUT (BROWSER) ----------------
 st.subheader("🎤 Speak your farm details")
 
 speech_js = """
@@ -75,8 +84,8 @@ recognition.onresult = function(event) {
 };
 </script>
 
-<textarea id="speech_output" rows="2" style="width:100%" 
-placeholder="Example: temperature 30, rainfall 1200, nitrogen 60"></textarea>
+<textarea id="speech_output" rows="2" style="width:100%"
+placeholder="Example: temperature 30 rainfall 1200 nitrogen 60"></textarea>
 <br><br>
 <button onclick="startDictation()">🎙️ Start Speaking</button>
 """
@@ -85,44 +94,69 @@ st.components.v1.html(speech_js, height=180)
 
 spoken_text = st.text_input("Detected Speech (editable)")
 
-# ---------------- ANALYZE SPEECH ----------------
-temp = extract_value(spoken_text, ["temperature", "temp"], 25)
-rain = extract_value(spoken_text, ["rainfall", "rain"], 1000)
-nitro = extract_value(spoken_text, ["nitrogen", "nitro"], 70)
+# ---------------- UPDATE VALUES FROM SPEECH ----------------
+if spoken_text:
+    st.session_state.temp = extract_value(
+        spoken_text, ["temperature", "temp"], st.session_state.temp
+    )
+    st.session_state.rain = extract_value(
+        spoken_text, ["rainfall", "rain"], st.session_state.rain
+    )
+    st.session_state.nitro = extract_value(
+        spoken_text, ["nitrogen", "nitro"], st.session_state.nitro
+    )
 
 st.divider()
 col1, col2 = st.columns(2)
 
 # ================= INPUT =================
 with col1:
-    st.header("📊 Auto-Extracted Values")
+    st.header("📊 Farm Parameters")
 
-    st.write(f"🌡️ Temperature: **{temp} °C**")
-    st.write(f"🌧️ Rainfall: **{rain} mm**")
-    st.write(f"🧪 Nitrogen: **{nitro}**")
+    temp = st.slider(
+        "🌡️ Temperature (°C)",
+        10, 50,
+        st.session_state.temp
+    )
+
+    rain = st.slider(
+        "🌧️ Rainfall (mm)",
+        200, 3000,
+        st.session_state.rain
+    )
+
+    nitro = st.number_input(
+        "🧪 Nitrogen Content (N)",
+        0, 150,
+        st.session_state.nitro
+    )
+
+    st.session_state.temp = temp
+    st.session_state.rain = rain
+    st.session_state.nitro = nitro
 
 # ================= OUTPUT =================
 with col2:
     st.header("🔮 Yield & Viability")
 
-    if st.button("🚀 Analyze from Speech"):
+    if st.button("🚀 Predict"):
         yield_val = (rain * 0.01) + (nitro * 0.05) - (abs(25 - temp) * 0.2)
 
-        result_msg = f"Your estimated crop yield is {yield_val:.2f} tons per hectare."
-        result_t = translate_text(result_msg, lang_code)
-
-        st.success(result_t)
-        speak_text(result_t, lang_code)
+        result = f"Estimated crop yield is {yield_val:.2f} tons per hectare."
 
         if yield_val < 12:
             advice = "Not suitable for planting. Improve irrigation or soil nutrients."
         else:
-            advice = "Suitable for planting. Conditions are favorable for good yield."
+            advice = "Suitable for planting. Conditions are favorable."
 
-        advice_t = translate_text(advice, lang_code)
-        st.info(advice_t)
-        speak_text(advice_t, lang_code)
+        # UI display
+        st.success(translate_text(result, lang_code))
+        st.info(translate_text(advice, lang_code))
+
+        # 🔊 SINGLE combined speech (NO overlap)
+        combined_speech = f"{result} {advice}"
+        speak_text(translate_text(combined_speech, lang_code), lang_code)
 
 # ---------------- FOOTER ----------------
 st.divider()
-st.caption("AgriVision AV — Speech-driven farm intelligence 🌾")
+st.caption("AgriVision AV — Speech-controlled agricultural decision system 🌾")
