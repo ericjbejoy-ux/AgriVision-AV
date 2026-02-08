@@ -1,3 +1,7 @@
 streamlit
 pandas
-gtts
+scikit-learn
+joblib
+numpy
+deep-translator
+gTTS
