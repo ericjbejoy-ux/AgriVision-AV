@@ -3,77 +3,126 @@ import pandas as pd
 import numpy as np
 from deep_translator import GoogleTranslator
 from gtts import gTTS
-import base64
+import speech_recognition as sr
+import uuid
 import os
 
-# --- PAGE CONFIG ---
-st.set_page_config(page_title="AgriVision (AV)", page_icon="🌱", layout="wide")
+# ---------------- PAGE CONFIG ----------------
+st.set_page_config(
+    page_title="AgriVision (AV)",
+    page_icon="🌱",
+    layout="wide"
+)
 
-# --- TRANSLATION & VOICE LOGIC ---
-def translate_and_speak(text, target_lang):
-    # 1. Translate
-    translated = GoogleTranslator(source='auto', target=target_lang).translate(text)
-    
-    # 2. Create Voice (Text-to-Speech)
+# ---------------- UTILS ----------------
+def speak_text(text, lang):
+    """Generate single safe audio output (no collision)"""
+    filename = f"audio_{uuid.uuid4()}.mp3"
+    tts = gTTS(text=text, lang=lang)
+    tts.save(filename)
+
+    with open(filename, "rb") as audio:
+        st.audio(audio.read(), format="audio/mp3")
+
+    os.remove(filename)
+
+
+def translate_text(text, target_lang):
+    return GoogleTranslator(source="auto", target=target_lang).translate(text)
+
+
+def speech_to_text(audio_file):
+    """Convert uploaded speech to text"""
+    r = sr.Recognizer()
+    with sr.AudioFile(audio_file) as source:
+        audio = r.record(source)
     try:
-        tts = gTTS(text=translated, lang=target_lang, slow=False)
-        tts.save("response.mp3")
-        with open("response.mp3", "rb") as f:
-            data = f.read()
-            b64 = base64.b64encode(data).decode()
-            audio_html = f'<audio autoplay="true"><source src="data:audio/mp3;base64,{b64}" type="audio/mp3"></audio>'
-            st.markdown(audio_html, unsafe_allow_html=True)
+        return r.recognize_google(audio)
     except:
-        pass # Fallback if TTS fails
-    return translated
+        return None
 
-# --- UI HEADER ---
+
+# ---------------- UI HEADER ----------------
 st.title("🌱 AgriVision (AV)")
 st.markdown("### *Breaking the Literacy Barrier in Agriculture*")
 
-# --- SIDEBAR / SETTINGS ---
+# ---------------- SIDEBAR ----------------
 st.sidebar.header("⚙️ Settings / सेटिंग्स")
-languages = {"English": "en", "Hindi": "hi", "Tamil": "ta", "Telugu": "te", "Marathi": "mr"}
-sel_lang_name = st.sidebar.selectbox("Select Language / भाषा चुनें", list(languages.keys()))
-target_code = languages[sel_lang_name]
 
-# --- MAIN INTERFACE ---
+languages = {
+    "English": "en",
+    "Hindi": "hi",
+    "Tamil": "ta",
+    "Telugu": "te",
+    "Marathi": "mr"
+}
+
+sel_lang = st.sidebar.selectbox("Select Language / भाषा चुनें", list(languages.keys()))
+lang_code = languages[sel_lang]
+
+# ---------------- MAIN UI ----------------
 st.divider()
+col1, col2 = st.columns(2)
 
-col1, col2 = st.columns([1, 1])
-
+# ================= INPUT COLUMN =================
 with col1:
-    st.header("📊 " + GoogleTranslator(target=target_code).translate("Enter Farm Details"))
-    
-    # Simplified Inputs for Farmers
-    temp = st.slider("🌡️ " + GoogleTranslator(target=target_code).translate("Temperature (°C)"), 10, 50, 25)
-    rain = st.slider("🌧️ " + GoogleTranslator(target=target_code).translate("Rainfall (mm)"), 200, 3000, 1000)
-    nitro = st.number_input("🧪 " + GoogleTranslator(target=target_code).translate("Nitrogen Content (N)"), 0, 150, 70)
+    st.header("📊 " + translate_text("Enter Farm Details", lang_code))
 
+    st.subheader("🎤 Voice Input (Optional)")
+    audio_file = st.file_uploader("Upload voice (WAV format)", type=["wav"])
+
+    spoken_text = ""
+    if audio_file:
+        spoken_text = speech_to_text(audio_file)
+        if spoken_text:
+            st.success(f"Detected Speech: {spoken_text}")
+        else:
+            st.error("Could not recognize speech")
+
+    st.subheader("✍️ Manual Input")
+
+    temp = st.slider(
+        "🌡️ " + translate_text("Temperature (°C)", lang_code),
+        10, 50, 25
+    )
+
+    rain = st.slider(
+        "🌧️ " + translate_text("Rainfall (mm)", lang_code),
+        200, 3000, 1000
+    )
+
+    nitro = st.number_input(
+        "🧪 " + translate_text("Nitrogen Content (N)", lang_code),
+        0, 150, 70
+    )
+
+# ================= OUTPUT COLUMN =================
 with col2:
-    st.header("🔮 " + GoogleTranslator(target=target_code).translate("Yield Prediction"))
-    
-    if st.button("🚀 " + GoogleTranslator(target=target_code).translate("Predict My Yield")):
-        # MOCK ML MODEL LOGIC (Replace this with model.predict() later)
-        # Yield = (Rainfall * 0.01) + (Nitrogen * 0.05) - (Temp variation)
-        result_value = (rain * 0.01) + (nitro * 0.05) - (abs(25-temp) * 0.2)
-        
-        result_msg = f"Your estimated crop yield is {result_value:.2f} tons per hectare."
-        
-        # Translate and Speak the result!
-        translated_msg = translate_and_speak(result_msg, target_code)
-        
-        st.success(translated_msg)
-        st.metric(label="Predicted Yield", value=f"{result_value:.2f} Tons/Ha")
-        
-        # Actionable Advice
-        if result_value < 12:
-            advice = "Warning: Yield is low. Try increasing Nitrogen or checking irrigation."
+    st.header("🔮 " + translate_text("Yield Prediction", lang_code))
+
+    if st.button("🚀 " + translate_text("Predict My Yield", lang_code)):
+
+        # ---- MOCK MODEL ----
+        result = (rain * 0.01) + (nitro * 0.05) - (abs(25 - temp) * 0.2)
+
+        result_text = f"Your estimated crop yield is {result:.2f} tons per hectare."
+        translated_result = translate_text(result_text, lang_code)
+
+        st.success(translated_result)
+        speak_text(translated_result, lang_code)
+
+        st.metric("Predicted Yield", f"{result:.2f} Tons/Ha")
+
+        # ---- ADVICE ----
+        if result < 12:
+            advice = "Warning: Yield is low. Try increasing Nitrogen or improving irrigation."
         else:
             advice = "Great news! Conditions are optimal for a high yield."
-        
-        st.info(translate_and_speak(advice, target_code))
 
-# --- FOOTER ---
+        translated_advice = translate_text(advice, lang_code)
+        st.info(translated_advice)
+        speak_text(translated_advice, lang_code)
+
+# ---------------- FOOTER ----------------
 st.divider()
-st.caption("AgriVision AV - Empowering every farmer with Data Science.")
+st.caption("AgriVision AV — Empowering every farmer with Data Science 🌾")
