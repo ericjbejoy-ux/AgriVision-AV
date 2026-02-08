@@ -1,10 +1,11 @@
 import streamlit as st
 import re
+import pandas as pd
 from deep_translator import GoogleTranslator
 from gtts import gTTS
 import uuid
-import os
 import base64
+import os
 
 # ---------------- PAGE CONFIG ----------------
 st.set_page_config(
@@ -14,12 +15,16 @@ st.set_page_config(
 )
 
 # ---------------- SESSION STATE INIT ----------------
-if "temp" not in st.session_state:
-    st.session_state.temp = 25
-if "rain" not in st.session_state:
-    st.session_state.rain = 1000
-if "nitro" not in st.session_state:
-    st.session_state.nitro = 70
+defaults = {
+    "temp": 25,
+    "rain": 1000,
+    "nitro": 70,
+    "data_table": pd.DataFrame(columns=["Temperature", "Rainfall", "Nitrogen"])
+}
+
+for key, value in defaults.items():
+    if key not in st.session_state:
+        st.session_state[key] = value
 
 # ---------------- UTILS ----------------
 def translate_text(text, lang):
@@ -32,12 +37,14 @@ def speak_text(text, lang):
     with open(filename, "rb") as f:
         b64 = base64.b64encode(f.read()).decode()
 
-    st.markdown(f"""
+    st.markdown(
+        f"""
         <audio autoplay>
             <source src="data:audio/mp3;base64,{b64}">
         </audio>
-    """, unsafe_allow_html=True)
-
+        """,
+        unsafe_allow_html=True
+    )
     os.remove(filename)
 
 def extract_value(text, keywords, default):
@@ -49,7 +56,7 @@ def extract_value(text, keywords, default):
 
 # ---------------- HEADER ----------------
 st.title("🌱 AgriVision (AV)")
-st.markdown("### *Breaking the Literacy Barrier in Agriculture*")
+st.markdown("### *Speech → Data → Decision Support for Farmers*")
 
 # ---------------- SIDEBAR ----------------
 st.sidebar.header("⚙️ Settings")
@@ -65,7 +72,7 @@ languages = {
 lang_name = st.sidebar.selectbox("Language", list(languages.keys()))
 lang_code = languages[lang_name]
 
-# ---------------- SPEECH INPUT (BROWSER) ----------------
+# ---------------- SPEECH INPUT ----------------
 st.subheader("🎤 Speak your farm details")
 
 speech_js = """
@@ -79,8 +86,8 @@ function startDictation() {
 }
 
 recognition.onresult = function(event) {
-    const text = event.results[0][0].transcript;
-    document.getElementById("speech_output").value = text;
+    document.getElementById("speech_output").value =
+        event.results[0][0].transcript;
 };
 </script>
 
@@ -94,24 +101,38 @@ st.components.v1.html(speech_js, height=180)
 
 spoken_text = st.text_input("Detected Speech (editable)")
 
-# ---------------- UPDATE VALUES FROM SPEECH ----------------
+# ---------------- VOICE → DATA TABLE ----------------
 if spoken_text:
-    st.session_state.temp = extract_value(
-        spoken_text, ["temperature", "temp"], st.session_state.temp
+    temp = extract_value(spoken_text, ["temperature", "temp"], st.session_state.temp)
+    rain = extract_value(spoken_text, ["rainfall", "rain"], st.session_state.rain)
+    nitro = extract_value(spoken_text, ["nitrogen", "nitro"], st.session_state.nitro)
+
+    new_row = {
+        "Temperature": temp,
+        "Rainfall": rain,
+        "Nitrogen": nitro
+    }
+
+    st.session_state.data_table = pd.concat(
+        [st.session_state.data_table, pd.DataFrame([new_row])],
+        ignore_index=True
     )
-    st.session_state.rain = extract_value(
-        spoken_text, ["rainfall", "rain"], st.session_state.rain
-    )
-    st.session_state.nitro = extract_value(
-        spoken_text, ["nitrogen", "nitro"], st.session_state.nitro
-    )
+
+    # Update sliders from latest row
+    st.session_state.temp = temp
+    st.session_state.rain = rain
+    st.session_state.nitro = nitro
+
+# ---------------- DATA TABLE DISPLAY ----------------
+st.subheader("📋 Captured Farm Data (from Speech)")
+st.dataframe(st.session_state.data_table, use_container_width=True)
 
 st.divider()
 col1, col2 = st.columns(2)
 
 # ================= INPUT =================
 with col1:
-    st.header("📊 Farm Parameters")
+    st.header("📊 Farm Parameters (Auto-filled)")
 
     temp = st.slider(
         "🌡️ Temperature (°C)",
@@ -126,7 +147,7 @@ with col1:
     )
 
     nitro = st.number_input(
-        "🧪 Nitrogen Content (N)",
+        "🧪 Nitrogen Content",
         0, 150,
         st.session_state.nitro
     )
@@ -137,26 +158,26 @@ with col1:
 
 # ================= OUTPUT =================
 with col2:
-    st.header("🔮 Yield & Viability")
+    st.header("🔮 Yield Prediction")
 
     if st.button("🚀 Predict"):
         yield_val = (rain * 0.01) + (nitro * 0.05) - (abs(25 - temp) * 0.2)
-
-        result = f"Estimated crop yield is {yield_val:.2f} tons per hectare."
 
         if yield_val < 12:
             advice = "Not suitable for planting. Improve irrigation or soil nutrients."
         else:
             advice = "Suitable for planting. Conditions are favorable."
 
-        # UI display
+        result = f"Estimated crop yield is {yield_val:.2f} tons per hectare."
+
+        # UI
         st.success(translate_text(result, lang_code))
         st.info(translate_text(advice, lang_code))
 
-        # 🔊 SINGLE combined speech (NO overlap)
-        combined_speech = f"{result} {advice}"
-        speak_text(translate_text(combined_speech, lang_code), lang_code)
+        # 🔊 ONE clean audio output
+        combined = f"{result} {advice}"
+        speak_text(translate_text(combined, lang_code), lang_code)
 
 # ---------------- FOOTER ----------------
 st.divider()
-st.caption("AgriVision AV — Speech-controlled agricultural decision system 🌾")
+st.caption("AgriVision AV — Voice-driven, data-backed farming insights 🌾")
