@@ -2,4 +2,6 @@ streamlit
 deep-translator
 gTTS
 SpeechRecognition
-legacy-cgi
+pydub
+numpy
+pandas
