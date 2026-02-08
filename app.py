@@ -2,12 +2,9 @@ import streamlit as st
 import numpy as np
 from deep_translator import GoogleTranslator
 from gtts import gTTS
-import speech_recognition as sr
-from streamlit_webrtc import webrtc_streamer, AudioProcessorBase
-import av
 import uuid
 import os
-import queue
+import base64
 
 # ---------------- PAGE CONFIG ----------------
 st.set_page_config(
@@ -16,15 +13,6 @@ st.set_page_config(
     layout="wide"
 )
 
-# ---------------- GLOBAL QUEUE ----------------
-if "audio_queue" not in st.session_state:
-    st.session_state.audio_queue = queue.Queue()
-
-class AudioProcessor(AudioProcessorBase):
-    def recv(self, frame: av.AudioFrame):
-        st.session_state.audio_queue.put(frame)
-        return frame
-
 # ---------------- UTILS ----------------
 def translate_text(text, lang):
     return GoogleTranslator(source="auto", target=lang).translate(text)
@@ -32,29 +20,18 @@ def translate_text(text, lang):
 def speak_text(text, lang):
     filename = f"audio_{uuid.uuid4()}.mp3"
     gTTS(text=text, lang=lang).save(filename)
-    st.audio(filename)
+
+    with open(filename, "rb") as f:
+        audio_bytes = f.read()
+        b64 = base64.b64encode(audio_bytes).decode()
+
+    audio_html = f"""
+    <audio autoplay>
+        <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
+    </audio>
+    """
+    st.markdown(audio_html, unsafe_allow_html=True)
     os.remove(filename)
-
-def recognize_speech():
-    recognizer = sr.Recognizer()
-    frames = []
-
-    while not st.session_state.audio_queue.empty():
-        frame = st.session_state.audio_queue.get()
-        frames.append(frame.to_ndarray())
-
-    if not frames:
-        return None
-
-    audio_np = np.concatenate(frames, axis=1)
-    audio_data = audio_np.tobytes()
-
-    audio = sr.AudioData(audio_data, sample_rate=48000, sample_width=2)
-
-    try:
-        return recognizer.recognize_google(audio)
-    except:
-        return None
 
 # ---------------- UI HEADER ----------------
 st.title("🌱 AgriVision (AV)")
@@ -74,6 +51,38 @@ languages = {
 lang_name = st.sidebar.selectbox("Language", list(languages.keys()))
 lang_code = languages[lang_name]
 
+# ---------------- SPEECH INPUT (JS) ----------------
+st.subheader("🎤 Speak your farm details")
+
+speech_js = """
+<script>
+const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+recognition.lang = 'en-US';
+recognition.continuous = false;
+
+function startDictation() {
+    recognition.start();
+}
+
+recognition.onresult = function(event) {
+    const text = event.results[0][0].transcript;
+    document.getElementById("speech_output").value = text;
+};
+
+recognition.onerror = function(event) {
+    console.log(event.error);
+};
+</script>
+
+<textarea id="speech_output" rows="2" style="width:100%" placeholder="Your speech will appear here..."></textarea>
+<br><br>
+<button onclick="startDictation()">🎙️ Start Speaking</button>
+"""
+
+st.components.v1.html(speech_js, height=180)
+
+spoken_text = st.text_input("Detected Speech (editable)", "")
+
 # ---------------- MAIN UI ----------------
 st.divider()
 col1, col2 = st.columns(2)
@@ -82,50 +91,29 @@ col1, col2 = st.columns(2)
 with col1:
     st.header("📊 " + translate_text("Enter Farm Details", lang_code))
 
-    st.subheader("🎤 Speak now (click Start → talk → Stop)")
-
-    ctx = webrtc_streamer(
-        key="mic",
-        audio_processor_factory=AudioProcessor,
-        media_stream_constraints={"audio": True, "video": False},
-        async_processing=True,
-    )
-
-    if st.button("🗣️ Convert Speech to Text"):
-        if ctx.state.playing:
-            st.warning("Please stop recording first")
-        else:
-            spoken = recognize_speech()
-            if spoken:
-                st.success(f"You said: {spoken}")
-            else:
-                st.error("No speech detected")
-
-    st.subheader("✍️ Manual Input")
     temp = st.slider("🌡️ Temperature (°C)", 10, 50, 25)
     rain = st.slider("🌧️ Rainfall (mm)", 200, 3000, 1000)
     nitro = st.number_input("🧪 Nitrogen Content (N)", 0, 150, 70)
 
 # ================= OUTPUT =================
 with col2:
-    st.header("🔮 " + translate_text("Yield Prediction", lang_code))
+    st.header("🔮 " + translate_text("Yield & Viability", lang_code))
 
-    if st.button("🚀 Predict My Yield"):
-        result = (rain * 0.01) + (nitro * 0.05) - (abs(25 - temp) * 0.2)
+    if st.button("🚀 Predict"):
+        yield_val = (rain * 0.01) + (nitro * 0.05) - (abs(25 - temp) * 0.2)
 
-        msg = f"Your estimated crop yield is {result:.2f} tons per hectare."
-        translated = translate_text(msg, lang_code)
+        result_msg = f"Your estimated crop yield is {yield_val:.2f} tons per hectare."
+        result_t = translate_text(result_msg, lang_code)
 
-        st.success(translated)
-        speak_text(translated, lang_code)
+        st.success(result_t)
+        speak_text(result_t, lang_code)
 
-        st.metric("Predicted Yield", f"{result:.2f} Tons/Ha")
+        st.metric("Predicted Yield", f"{yield_val:.2f} Tons/Ha")
 
-        advice = (
-            "Warning: Yield is low. Improve irrigation or nitrogen."
-            if result < 12
-            else "Great news! Conditions are optimal for a high yield."
-        )
+        if yield_val < 12:
+            advice = "Not suitable for planting. Improve irrigation or soil nutrients."
+        else:
+            advice = "Suitable for planting. Conditions are favorable for good yield."
 
         advice_t = translate_text(advice, lang_code)
         st.info(advice_t)
@@ -133,4 +121,4 @@ with col2:
 
 # ---------------- FOOTER ----------------
 st.divider()
-st.caption("AgriVision AV — Empowering every farmer 🌾")
+st.caption("AgriVision AV — Voice-enabled decision support for farmers 🌾")
