@@ -16,37 +16,40 @@ st.set_page_config(
     layout="wide"
 )
 
-# ---------------- AUDIO QUEUE ----------------
-audio_queue = queue.Queue()
+# ---------------- GLOBAL QUEUE ----------------
+if "audio_queue" not in st.session_state:
+    st.session_state.audio_queue = queue.Queue()
 
 class AudioProcessor(AudioProcessorBase):
     def recv(self, frame: av.AudioFrame):
-        audio_queue.put(frame)
+        st.session_state.audio_queue.put(frame)
         return frame
 
 # ---------------- UTILS ----------------
+def translate_text(text, lang):
+    return GoogleTranslator(source="auto", target=lang).translate(text)
+
 def speak_text(text, lang):
     filename = f"audio_{uuid.uuid4()}.mp3"
     gTTS(text=text, lang=lang).save(filename)
     st.audio(filename)
     os.remove(filename)
 
-def translate_text(text, lang):
-    return GoogleTranslator(source="auto", target=lang).translate(text)
-
 def recognize_speech():
     recognizer = sr.Recognizer()
     frames = []
 
-    while not audio_queue.empty():
-        frame = audio_queue.get()
+    while not st.session_state.audio_queue.empty():
+        frame = st.session_state.audio_queue.get()
         frames.append(frame.to_ndarray())
 
     if not frames:
         return None
 
-    audio_data = np.concatenate(frames).tobytes()
-    audio = sr.AudioData(audio_data, 48000, 2)
+    audio_np = np.concatenate(frames, axis=1)
+    audio_data = audio_np.tobytes()
+
+    audio = sr.AudioData(audio_data, sample_rate=48000, sample_width=2)
 
     try:
         return recognizer.recognize_google(audio)
@@ -58,7 +61,7 @@ st.title("🌱 AgriVision (AV)")
 st.markdown("### *Breaking the Literacy Barrier in Agriculture*")
 
 # ---------------- SIDEBAR ----------------
-st.sidebar.header("⚙️ Settings / सेटिंग्स")
+st.sidebar.header("⚙️ Settings")
 
 languages = {
     "English": "en",
@@ -68,62 +71,66 @@ languages = {
     "Marathi": "mr"
 }
 
-lang_name = st.sidebar.selectbox("Select Language / भाषा चुनें", list(languages.keys()))
+lang_name = st.sidebar.selectbox("Language", list(languages.keys()))
 lang_code = languages[lang_name]
 
 # ---------------- MAIN UI ----------------
 st.divider()
 col1, col2 = st.columns(2)
 
-# ================= INPUT COLUMN =================
+# ================= INPUT =================
 with col1:
     st.header("📊 " + translate_text("Enter Farm Details", lang_code))
 
-    st.subheader("🎤 Speak your values")
+    st.subheader("🎤 Speak now (click Start → talk → Stop)")
 
-    webrtc_streamer(
-        key="speech",
+    ctx = webrtc_streamer(
+        key="mic",
         audio_processor_factory=AudioProcessor,
         media_stream_constraints={"audio": True, "video": False},
+        async_processing=True,
     )
 
     if st.button("🗣️ Convert Speech to Text"):
-        spoken_text = recognize_speech()
-        if spoken_text:
-            st.success(f"You said: {spoken_text}")
+        if ctx.state.playing:
+            st.warning("Please stop recording first")
         else:
-            st.error("Speech not detected")
+            spoken = recognize_speech()
+            if spoken:
+                st.success(f"You said: {spoken}")
+            else:
+                st.error("No speech detected")
 
     st.subheader("✍️ Manual Input")
-
     temp = st.slider("🌡️ Temperature (°C)", 10, 50, 25)
     rain = st.slider("🌧️ Rainfall (mm)", 200, 3000, 1000)
     nitro = st.number_input("🧪 Nitrogen Content (N)", 0, 150, 70)
 
-# ================= OUTPUT COLUMN =================
+# ================= OUTPUT =================
 with col2:
     st.header("🔮 " + translate_text("Yield Prediction", lang_code))
 
     if st.button("🚀 Predict My Yield"):
-        yield_val = (rain * 0.01) + (nitro * 0.05) - (abs(25 - temp) * 0.2)
+        result = (rain * 0.01) + (nitro * 0.05) - (abs(25 - temp) * 0.2)
 
-        result = f"Your estimated crop yield is {yield_val:.2f} tons per hectare."
-        translated = translate_text(result, lang_code)
+        msg = f"Your estimated crop yield is {result:.2f} tons per hectare."
+        translated = translate_text(msg, lang_code)
 
         st.success(translated)
         speak_text(translated, lang_code)
 
-        st.metric("Predicted Yield", f"{yield_val:.2f} Tons/Ha")
+        st.metric("Predicted Yield", f"{result:.2f} Tons/Ha")
 
-        if yield_val < 12:
-            advice = "Warning: Yield is low. Improve irrigation or nitrogen."
-        else:
-            advice = "Great news! Conditions are optimal for a high yield."
+        advice = (
+            "Warning: Yield is low. Improve irrigation or nitrogen."
+            if result < 12
+            else "Great news! Conditions are optimal for a high yield."
+        )
 
-        translated_advice = translate_text(advice, lang_code)
-        st.info(translated_advice)
-        speak_text(translated_advice, lang_code)
+        advice_t = translate_text(advice, lang_code)
+        st.info(advice_t)
+        speak_text(advice_t, lang_code)
 
 # ---------------- FOOTER ----------------
 st.divider()
-st.caption("AgriVision AV — Empowering every farmer with Data Science 🌾")
+st.caption("AgriVision AV — Empowering every farmer 🌾")
