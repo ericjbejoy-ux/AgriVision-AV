@@ -1,11 +1,9 @@
 import streamlit as st
 import re
 import pandas as pd
-from deep_translator import GoogleTranslator
 from gtts import gTTS
-import uuid
-import base64
-import os
+from deep_translator import GoogleTranslator
+import uuid, base64, os
 
 # ---------------- PAGE CONFIG ----------------
 st.set_page_config(
@@ -14,170 +12,115 @@ st.set_page_config(
     layout="wide"
 )
 
-# ---------------- SESSION STATE INIT ----------------
-defaults = {
-    "temp": 25,
-    "rain": 1000,
-    "nitro": 70,
-    "data_table": pd.DataFrame(columns=["Temperature", "Rainfall", "Nitrogen"])
-}
-
-for key, value in defaults.items():
-    if key not in st.session_state:
-        st.session_state[key] = value
+# ---------------- SESSION STATE ----------------
+if "temp" not in st.session_state:
+    st.session_state.temp = 25
+if "rain" not in st.session_state:
+    st.session_state.rain = 1000
+if "nitro" not in st.session_state:
+    st.session_state.nitro = 70
+if "data" not in st.session_state:
+    st.session_state.data = []
 
 # ---------------- UTILS ----------------
-def translate_text(text, lang):
-    return GoogleTranslator(source="auto", target=lang).translate(text)
+def extract_value(text, keys, default):
+    for k in keys:
+        m = re.search(rf"{k}[^0-9]*([0-9]+)", text.lower())
+        if m:
+            return int(m.group(1))
+    return default
 
-def speak_text(text, lang):
-    filename = f"audio_{uuid.uuid4()}.mp3"
-    gTTS(text=text, lang=lang).save(filename)
-
-    with open(filename, "rb") as f:
-        b64 = base64.b64encode(f.read()).decode()
-
+def speak(text, lang):
+    file = f"{uuid.uuid4()}.mp3"
+    gTTS(text=text, lang=lang).save(file)
+    audio = open(file, "rb").read()
+    b64 = base64.b64encode(audio).decode()
     st.markdown(
-        f"""
-        <audio autoplay>
-            <source src="data:audio/mp3;base64,{b64}">
-        </audio>
-        """,
+        f"<audio autoplay><source src='data:audio/mp3;base64,{b64}'></audio>",
         unsafe_allow_html=True
     )
-    os.remove(filename)
+    os.remove(file)
 
-def extract_value(text, keywords, default):
-    for key in keywords:
-        match = re.search(rf"{key}[^0-9]*([0-9]+)", text.lower())
-        if match:
-            return int(match.group(1))
-    return default
+def translate(text, lang):
+    return GoogleTranslator(source="auto", target=lang).translate(text)
 
 # ---------------- HEADER ----------------
 st.title("🌱 AgriVision (AV)")
-st.markdown("### *Speech → Data → Decision Support for Farmers*")
+st.caption("Speech → Stored Data → Auto Prediction")
 
-# ---------------- SIDEBAR ----------------
-st.sidebar.header("⚙️ Settings")
-
-languages = {
-    "English": "en",
-    "Hindi": "hi",
-    "Tamil": "ta",
-    "Telugu": "te",
-    "Marathi": "mr"
-}
-
-lang_name = st.sidebar.selectbox("Language", list(languages.keys()))
-lang_code = languages[lang_name]
+# ---------------- LANGUAGE ----------------
+lang_map = {"English":"en","Hindi":"hi","Tamil":"ta","Telugu":"te","Marathi":"mr"}
+lang = st.sidebar.selectbox("Language", list(lang_map.keys()))
+lang_code = lang_map[lang]
 
 # ---------------- SPEECH INPUT ----------------
 st.subheader("🎤 Speak your farm details")
 
 speech_js = """
 <script>
-const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
-recognition.lang = 'en-US';
-recognition.continuous = false;
-
-function startDictation() {
-    recognition.start();
-}
-
-recognition.onresult = function(event) {
-    document.getElementById("speech_output").value =
-        event.results[0][0].transcript;
+const r = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+r.lang = 'en-US';
+function start() { r.start(); }
+r.onresult = e => {
+document.getElementById("speech").value = e.results[0][0].transcript;
 };
 </script>
 
-<textarea id="speech_output" rows="2" style="width:100%"
-placeholder="Example: temperature 30 rainfall 1200 nitrogen 60"></textarea>
-<br><br>
-<button onclick="startDictation()">🎙️ Start Speaking</button>
+<textarea id="speech" rows="2" style="width:100%"
+placeholder="temperature 30 rainfall 1200 nitrogen 60"></textarea>
+<br><button onclick="start()">🎙️ Speak</button>
 """
+st.components.v1.html(speech_js, height=160)
 
-st.components.v1.html(speech_js, height=180)
+spoken = st.text_input("Detected Speech")
 
-spoken_text = st.text_input("Detected Speech (editable)")
+# ---------------- SAVE BUTTON (KEY FIX) ----------------
+if st.button("💾 Save Speech Data"):
+    t = extract_value(spoken, ["temperature","temp"], st.session_state.temp)
+    r = extract_value(spoken, ["rainfall","rain"], st.session_state.rain)
+    n = extract_value(spoken, ["nitrogen","nitro"], st.session_state.nitro)
 
-# ---------------- VOICE → DATA TABLE ----------------
-if spoken_text:
-    temp = extract_value(spoken_text, ["temperature", "temp"], st.session_state.temp)
-    rain = extract_value(spoken_text, ["rainfall", "rain"], st.session_state.rain)
-    nitro = extract_value(spoken_text, ["nitrogen", "nitro"], st.session_state.nitro)
+    st.session_state.data.append({
+        "Temperature": t,
+        "Rainfall": r,
+        "Nitrogen": n
+    })
 
-    new_row = {
-        "Temperature": temp,
-        "Rainfall": rain,
-        "Nitrogen": nitro
-    }
+    st.session_state.temp = t
+    st.session_state.rain = r
+    st.session_state.nitro = n
 
-    st.session_state.data_table = pd.concat(
-        [st.session_state.data_table, pd.DataFrame([new_row])],
-        ignore_index=True
-    )
+    st.success("Speech data stored successfully ✅")
 
-    # Update sliders from latest row
-    st.session_state.temp = temp
-    st.session_state.rain = rain
-    st.session_state.nitro = nitro
-
-# ---------------- DATA TABLE DISPLAY ----------------
-st.subheader("📋 Captured Farm Data (from Speech)")
-st.dataframe(st.session_state.data_table, use_container_width=True)
+# ---------------- DATA TABLE ----------------
+st.subheader("📋 Stored Speech Data")
+df = pd.DataFrame(st.session_state.data)
+st.dataframe(df, use_container_width=True)
 
 st.divider()
-col1, col2 = st.columns(2)
+c1, c2 = st.columns(2)
 
-# ================= INPUT =================
-with col1:
-    st.header("📊 Farm Parameters (Auto-filled)")
+# ---------------- INPUT ----------------
+with c1:
+    temp = st.slider("🌡 Temperature (°C)", 10, 50, st.session_state.temp)
+    rain = st.slider("🌧 Rainfall (mm)", 200, 3000, st.session_state.rain)
+    nitro = st.number_input("🧪 Nitrogen", 0, 150, st.session_state.nitro)
 
-    temp = st.slider(
-        "🌡️ Temperature (°C)",
-        10, 50,
-        st.session_state.temp
-    )
-
-    rain = st.slider(
-        "🌧️ Rainfall (mm)",
-        200, 3000,
-        st.session_state.rain
-    )
-
-    nitro = st.number_input(
-        "🧪 Nitrogen Content",
-        0, 150,
-        st.session_state.nitro
-    )
-
-    st.session_state.temp = temp
-    st.session_state.rain = rain
-    st.session_state.nitro = nitro
-
-# ================= OUTPUT =================
-with col2:
-    st.header("🔮 Yield Prediction")
-
+# ---------------- OUTPUT ----------------
+with c2:
     if st.button("🚀 Predict"):
-        yield_val = (rain * 0.01) + (nitro * 0.05) - (abs(25 - temp) * 0.2)
-
-        if yield_val < 12:
-            advice = "Not suitable for planting. Improve irrigation or soil nutrients."
-        else:
-            advice = "Suitable for planting. Conditions are favorable."
-
+        yield_val = (rain*0.01) + (nitro*0.05) - abs(25-temp)*0.2
         result = f"Estimated crop yield is {yield_val:.2f} tons per hectare."
 
-        # UI
-        st.success(translate_text(result, lang_code))
-        st.info(translate_text(advice, lang_code))
+        advice = (
+            "Suitable for planting. Conditions are favorable."
+            if yield_val >= 12 else
+            "Not suitable for planting. Improve irrigation or nutrients."
+        )
 
-        # 🔊 ONE clean audio output
-        combined = f"{result} {advice}"
-        speak_text(translate_text(combined, lang_code), lang_code)
+        st.success(translate(result, lang_code))
+        st.info(translate(advice, lang_code))
 
-# ---------------- FOOTER ----------------
-st.divider()
-st.caption("AgriVision AV — Voice-driven, data-backed farming insights 🌾")
+        speak(translate(f"{result} {advice}", lang_code), lang_code)
+
+st.caption("AgriVision AV — robust speech-driven farming intelligence 🌾")
