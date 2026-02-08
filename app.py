@@ -13,6 +13,10 @@ st.set_page_config(
     layout="wide"
 )
 
+# ---------------- SESSION STATE INIT ----------------
+if "language" not in st.session_state:
+    st.session_state.language = "English"
+
 # ---------------- UTILS ----------------
 def translate_text(text, lang):
     return GoogleTranslator(source="auto", target=lang).translate(text)
@@ -48,30 +52,41 @@ languages = {
     "Marathi": "mr"
 }
 
-lang_name = st.sidebar.selectbox("Language", list(languages.keys()))
+lang_name = st.sidebar.selectbox(
+    "Language",
+    options=list(languages.keys()),
+    index=list(languages.keys()).index(st.session_state.language),
+    key="language_selector"
+)
+
+st.session_state.language = lang_name
 lang_code = languages[lang_name]
 
-# ---------------- SPEECH INPUT (JS) ----------------
+# ---------------- SPEECH INPUT (JS – SAFE) ----------------
 st.subheader("🎤 Speak your farm details")
 
 speech_js = """
 <script>
-const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
-recognition.lang = 'en-US';
-recognition.continuous = false;
+var recognition;
 
 function startDictation() {
+    if (!('webkitSpeechRecognition' in window)) {
+        alert("Speech recognition not supported in this browser");
+        return;
+    }
+
+    recognition = new webkitSpeechRecognition();
+    recognition.lang = 'en-US';
+    recognition.continuous = false;
+    recognition.interimResults = false;
+
+    recognition.onresult = function(event) {
+        const text = event.results[0][0].transcript;
+        document.getElementById("speech_output").value = text;
+    };
+
     recognition.start();
 }
-
-recognition.onresult = function(event) {
-    const text = event.results[0][0].transcript;
-    document.getElementById("speech_output").value = text;
-};
-
-recognition.onerror = function(event) {
-    console.log(event.error);
-};
 </script>
 
 <textarea id="speech_output" rows="2" style="width:100%" placeholder="Your speech will appear here..."></textarea>
