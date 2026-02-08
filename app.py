@@ -1,6 +1,7 @@
 import streamlit as st
 import re
 import pandas as pd
+from deep_translator import GoogleTranslator
 from gtts import gTTS
 import uuid
 import base64
@@ -13,26 +14,26 @@ st.set_page_config(
     layout="wide"
 )
 
-# ---------------- SESSION STATE ----------------
-if "temp" not in st.session_state:
-    st.session_state.temp = 25
-if "rain" not in st.session_state:
-    st.session_state.rain = 1000
-if "nitro" not in st.session_state:
-    st.session_state.nitro = 70
-if "speech_raw" not in st.session_state:
-    st.session_state.speech_raw = ""
-if "speech_stored" not in st.session_state:
-    st.session_state.speech_stored = ""
-if "data_table" not in st.session_state:
-    st.session_state.data_table = pd.DataFrame(
-        columns=["Temperature", "Rainfall", "Nitrogen"]
-    )
+# ---------------- SESSION STATE INIT ----------------
+defaults = {
+    "temp": 25,
+    "rain": 1000,
+    "nitro": 70,
+    "speech_text": "",
+    "data_table": pd.DataFrame(columns=["Temperature", "Rainfall", "Nitrogen"])
+}
+
+for key, value in defaults.items():
+    if key not in st.session_state:
+        st.session_state[key] = value
 
 # ---------------- UTILS ----------------
-def speak_text(text):
+def translate_text(text, lang):
+    return GoogleTranslator(source="auto", target=lang).translate(text)
+
+def speak_text(text, lang):
     filename = f"audio_{uuid.uuid4()}.mp3"
-    gTTS(text=text, lang="en").save(filename)
+    gTTS(text=text, lang=lang).save(filename)
 
     with open(filename, "rb") as f:
         b64 = base64.b64encode(f.read()).decode()
@@ -56,7 +57,21 @@ def extract_value(text, keywords, default):
 
 # ---------------- HEADER ----------------
 st.title("🌱 AgriVision (AV)")
-st.markdown("### *Speech → Data → Smart Farming Decisions*")
+st.markdown("### *Speech → Data → Decision Support for Farmers*")
+
+# ---------------- SIDEBAR ----------------
+st.sidebar.header("⚙️ Settings")
+
+languages = {
+    "English": "en",
+    "Hindi": "hi",
+    "Tamil": "ta",
+    "Telugu": "te",
+    "Marathi": "mr"
+}
+
+lang_name = st.sidebar.selectbox("Language", list(languages.keys()))
+lang_code = languages[lang_name]
 
 # ---------------- SPEECH INPUT ----------------
 st.subheader("🎤 Speak your farm details")
@@ -72,12 +87,12 @@ function startDictation() {
 }
 
 recognition.onresult = function(event) {
-    document.getElementById("speech_box").value =
+    document.getElementById("speech_output").value =
         event.results[0][0].transcript;
 };
 </script>
 
-<textarea id="speech_box" rows="2" style="width:100%"
+<textarea id="speech_output" rows="2" style="width:100%"
 placeholder="Example: temperature 30 rainfall 1200 nitrogen 60"></textarea>
 <br><br>
 <button onclick="startDictation()">🎙️ Start Speaking</button>
@@ -85,38 +100,36 @@ placeholder="Example: temperature 30 rainfall 1200 nitrogen 60"></textarea>
 
 st.components.v1.html(speech_js, height=180)
 
-# Raw speech input (manual sync)
-st.session_state.speech_raw = st.text_input(
-    "Raw Speech Input",
-    st.session_state.speech_raw
-)
+# 👇 this already existed – we keep it
+spoken_text = st.text_input("Detected Speech (editable)", st.session_state.speech_text)
 
-# ---------------- STORE BUTTON ----------------
+# ---------------- STORE SPEECH DATA BUTTON ----------------
 if st.button("📥 Store Speech Data"):
-    st.session_state.speech_stored = st.session_state.speech_raw
+    # ✅ ONLY NEW LINE: move spoken text into session
+    st.session_state.speech_text = spoken_text
 
     temp = extract_value(
-        st.session_state.speech_stored,
+        st.session_state.speech_text,
         ["temperature", "temp"],
         st.session_state.temp
     )
     rain = extract_value(
-        st.session_state.speech_stored,
+        st.session_state.speech_text,
         ["rainfall", "rain"],
         st.session_state.rain
     )
     nitro = extract_value(
-        st.session_state.speech_stored,
+        st.session_state.speech_text,
         ["nitrogen", "nitro"],
         st.session_state.nitro
     )
 
-    # Update session state
+    # update sliders
     st.session_state.temp = temp
     st.session_state.rain = rain
     st.session_state.nitro = nitro
 
-    # Store in table
+    # store into table
     st.session_state.data_table = pd.concat(
         [
             st.session_state.data_table,
@@ -129,18 +142,10 @@ if st.button("📥 Store Speech Data"):
         ignore_index=True
     )
 
-    st.success("Speech data stored and applied successfully!")
-
-# ---------------- DETECTED SPEECH ----------------
-st.subheader("📝 Detected Speech (Stored)")
-st.text_area(
-    "Detected Speech",
-    st.session_state.speech_stored,
-    height=70
-)
+    st.success("Speech data stored and applied")
 
 # ---------------- DATA TABLE ----------------
-st.subheader("📋 Stored Farm Data")
+st.subheader("📋 Captured Farm Data")
 st.dataframe(st.session_state.data_table, use_container_width=True)
 
 # ---------------- MAIN UI ----------------
@@ -185,11 +190,14 @@ with col2:
 
         result = f"Estimated crop yield is {yield_val:.2f} tons per hectare."
 
-        st.success(result)
-        st.info(advice)
+        st.success(translate_text(result, lang_code))
+        st.info(translate_text(advice, lang_code))
 
-        speak_text(f"{result}. {advice}")
+        speak_text(
+            translate_text(f"{result}. {advice}", lang_code),
+            lang_code
+        )
 
 # ---------------- FOOTER ----------------
 st.divider()
-st.caption("AgriVision AV — Controlled voice-to-data farming system 🌾")
+st.caption("AgriVision AV — Voice-enabled decision support for farmers 🌾")
