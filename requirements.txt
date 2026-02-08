@@ -1,8 +1,5 @@
 streamlit
-speechrecognition
-gtts
-pandas
-numpy
-plotly
-legacy-cgi
 deep-translator
+gTTS
+SpeechRecognition
+legacy-cgi
